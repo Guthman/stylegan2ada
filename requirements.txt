@@ -1,3 +1,13 @@
 click
 psutil
-
+torch==1.7.1
+imageio-ffmpeg==0.4.3
+pyspng==0.1.0
+requests
+tqdm
+ninja
+jupyter
+# imageio
+jpeg4py
+Pillow
+numpy
