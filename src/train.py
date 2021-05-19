@@ -24,29 +24,24 @@ class UserError(Exception):
 
 
 def setup_training_loop_kwargs(
-        # data
-        data=None,  # Training dataset (required): <path>
-        resume=None,
-        # Load previous network: 'noresume' (default), 'ffhq256', 'ffhq512',
-        # 'ffhq1024', 'celebahq256', 'lsundog256', <file>, <url>
-        mirror=None,  # Augment dataset with x-flips: <bool>, default = False
-        cond=None,  # Train conditional model based on dataset labels: <bool>, default = False
-        # training
-        cfg=None,  # Base config: 'auto' (default), 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar'
-        batch=None,  # Override batch size: <int>
-        lod_kimg=None,  # Training duration per LOD/layer: <int>
-        kimg=None,  # Override training duration: <int>
-        snap=None,  # Snapshot interval: <int>, default = 5 ticks
-        gamma=None,  # Override R1 gamma: <float>
-        freezed=None,  # Freeze-D: <int>, default = 0 discriminator layers
-        seed=None,  # Random seed: <int>, default = 0
-        # d augment
-        aug=None,  # Augmentation mode: 'ada' (default), 'noaug', 'fixed'
-        p=None,  # Specify p for 'fixed' (required): <float>
-        target=None,  # Override ADA target for 'ada': <float>, default = depends on aug
-        augpipe=None,
-        # Augmentation pipeline: 'blit', 'geom', 'color', 'filter', 'noise',
-        # 'cutout', 'bg', 'bgc' (default), ..., 'bgcfnc'
+    # data
+    data       = None, # Training dataset (required): <path>
+    resume     = None, # Load previous network: 'noresume' (default), 'ffhq256', 'ffhq512', 'ffhq1024', 'celebahq256', 'lsundog256', <file>, <url>
+    mirror     = None, # Augment dataset with x-flips: <bool>, default = False
+    cond       = None, # Train conditional model based on dataset labels: <bool>, default = False
+    # training
+    cfg        = None, # Base config: 'auto' (default), 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar'
+    batch      = None, # Override batch size: <int>
+    kimg       = None, # Override training duration: <int>
+    snap       = None, # Snapshot interval: <int>, default = 5 ticks
+    gamma      = None, # Override R1 gamma: <float>
+    freezed    = None, # Freeze-D: <int>, default = 0 discriminator layers
+    seed       = None, # Random seed: <int>, default = 0
+    # d augment
+    aug        = None, # Augmentation mode: 'ada' (default), 'noaug', 'fixed'
+    p          = None, # Specify p for 'fixed' (required): <float>
+    target     = None, # Override ADA target for 'ada': <float>, default = depends on aug
+    augpipe    = None, # Augmentation pipeline: 'blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc' (default), ..., 'bgcfnc'
 
         # general & perf options
         gpus=None,  # Number of GPUs: <int>, default = 1 gpu
@@ -125,16 +120,16 @@ def setup_training_loop_kwargs(
         desc += f'{gpus:d}'
 
     cfg_specs = {
-        'auto': dict(ramp=0.05, map=2),  # mapping_layers = 2 for uptrain (why?)
-        'eps': dict(lrate=0.001, ema=10, ramp=0.05, map=2),  # populated based on 'gpus' and 'res'
-        'big': dict(mb=4, fmaps=1, lrate=0.002, gamma=10, ema=10, ramp=None, map=8),  # aydao etc
+        'auto': dict(ramp=0.05, map=8),
+        'eps':  dict(lrate=0.001, ema=10, ramp=0.05, map=8),
+        'big':  dict(mb=4, fmaps=1, lrate=0.002, gamma=10, ema=10, ramp=None, map=8), # aydao etc
     }
 
     assert cfg in cfg_specs
     spec = dnnlib.EasyDict(cfg_specs[cfg])
     if cfg == 'auto':
         # spec.mb = max(min(gpus * min(4096 // res, 32), 64), gpus) # keep gpu memory consumption at bay
-        spec.mb = max(min(gpus * min(3072 // res, 32), 64), gpus)  # keep gpu memory consumption at bay
+        spec.mb = max(min(gpus * min(3072 // res, 32), 64), gpus) # for 11gb RAM
         spec.fmaps = 1 if res >= 512 else 0.5
         spec.lrate = 0.002 if res >= 1024 else 0.0025
         spec.gamma = 0.0002 * (res ** 2) / spec.mb  # heuristic formula
@@ -159,13 +154,35 @@ def setup_training_loop_kwargs(
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0, 0.99], eps=1e-8)
     args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
 
-    # use per-layer duration lod_kimg, or override with total kimg
-    args.total_kimg = kimg if (kimg is not None and kimg >= 1) else lod_kimg * res_log2 * 3  # ~ ProGAN *1.5
-
+    args.total_kimg = kimg
     args.batch_size = spec.mb
     args.batch_gpu = spec.mb // spec.ref_gpus
     args.ema_kimg = spec.ema
     args.ema_rampup = spec.ramp
+
+    """ from aydao [tf]
+    if 'div' in cfg: # for diverse datasets a la cifar
+        args.loss_args.pl_weight = 0 # disable path length regularization
+        args.G_args.style_mixing_prob = None # disable style mixing
+        args.D_args.architecture = 'orig' # disable residual skip connections
+
+    if cfg == 'big': # > 100k img
+        # disable path length and style mixing regularization
+        args.loss_args.pl_weight = 0
+        args.G_args.style_mixing_prob = None
+        # double generator capacity
+        args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = 32 << 10 # if double for torch, should be 64 << 10 ??
+        args.G_kwargs.synthesis_kwargs.channel_max  = args.D_kwargs.channel_max  = 1024
+        # enable top k training
+        args.loss_args.G_top_k = True # drop bad samples
+        # args.loss_args.G_top_k_gamma = 0.99 # takes ~70% of full training from scratch to decay to 0.5
+        # args.loss_args.G_top_k_gamma = 0.9862 # takes 12500 kimg to decay to 0.5 (~1/2 of total_kimg when training from scratch)
+        args.loss_args.G_top_k_gamma = 0.9726 # takes 6250 kimg to decay to 0.5 (~1/4 of total_kimg when training from scratch)
+        args.loss_args.G_top_k_frac = 0.5
+        # reduce in-memory size, you need a BIG GPU for big model
+        args.batch_gpu = 4 # probably will need to set this pretty low with such a large G, higher values work better for top-k training though
+        args.G_kwargs.synthesis_kwargs.num_fp16_res = 6 # making more layers fp16 can help as well
+    """
 
     if gamma is not None:
         assert gamma >= 0, '--gamma must be non-negative'
@@ -340,8 +357,7 @@ class CommaSeparatedList(click.ParamType):
 # training
 @click.option('--cfg', default='auto', help='Base config [default: auto]')
 @click.option('--batch', type=int, help='Override batch size', metavar='INT')
-@click.option('--lod_kimg', default=30, type=int, help='Per layer training duration', metavar='INT')
-@click.option('--kimg', type=int, help='Override total training duration', metavar='INT')
+@click.option('--kimg', type=int, help='Total training duration', metavar='INT')
 @click.option('--snap', default=5, type=int, help='Snapshot interval [default: 5 ticks]', metavar='INT')
 @click.option('--gamma', type=float, help='Override R1 gamma')
 @click.option('--freezed', type=int, help='Freeze-D [default: 0 layers]', metavar='INT')
@@ -417,7 +433,9 @@ def main(ctx, train_dir, dry_run, **config_kwargs):
 
 
 if __name__ == "__main__":
+
     # workaround for multithreading in jupyter console
     __spec__ = "ModuleSpec(name='builtins', loader=<class '_frozen_importlib.BuiltinImporter'>)"
 
     main()  # pylint: disable=no-value-for-parameter
+
