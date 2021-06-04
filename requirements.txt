@@ -11,3 +11,4 @@ jupyter
 jpeg4py
 Pillow
 numpy
+ujson

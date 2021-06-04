@@ -15,21 +15,26 @@ import re
 import numpy as np
 import torch
 import dnnlib
+import requests
+import json
+import socket
+import time
 
 from . import misc
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 
-_num_moments    = 3             # [num_scalars, sum_of_scalars, sum_of_squares]
-_reduce_dtype   = torch.float32 # Data type to use for initial per-tensor reduction.
-_counter_dtype  = torch.float64 # Data type to use for the internal counters.
-_rank           = 0             # Rank of the current process.
-_sync_device    = None          # Device to use for multiprocess communication. None = single-process.
-_sync_called    = False         # Has _sync() been called yet?
-_counters       = dict()        # Running counters on each device, updated by report(): name => device => torch.Tensor
-_cumulative     = dict()        # Cumulative counters on the CPU, updated by _sync(): name => torch.Tensor
+_num_moments = 3  # [num_scalars, sum_of_scalars, sum_of_squares]
+_reduce_dtype = torch.float32  # Data type to use for initial per-tensor reduction.
+_counter_dtype = torch.float64  # Data type to use for the internal counters.
+_rank = 0  # Rank of the current process.
+_sync_device = None  # Device to use for multiprocess communication. None = single-process.
+_sync_called = False  # Has _sync() been called yet?
+_counters = dict()  # Running counters on each device, updated by report(): name => device => torch.Tensor
+_cumulative = dict()  # Cumulative counters on the CPU, updated by _sync(): name => torch.Tensor
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 
 def init_multiprocessing(rank, sync_device):
     r"""Initializes `torch_utils.training_stats` for collecting statistics
@@ -50,7 +55,8 @@ def init_multiprocessing(rank, sync_device):
     _rank = rank
     _sync_device = sync_device
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 
 @misc.profiled_function
 def report(name, value):
@@ -98,7 +104,8 @@ def report(name, value):
     _counters[name][device].add_(moments)
     return value
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 
 def report0(name, value):
     r"""Broadcasts the given set of scalars by the first process (`rank = 0`),
@@ -108,7 +115,8 @@ def report0(name, value):
     report(name, value if _rank == 0 else [])
     return value
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 
 class Collector:
     r"""Collects the scalars broadcasted by `report()` and `report0()` and
@@ -130,13 +138,20 @@ class Collector:
                         scalars were collected on a given round
                         (default: True).
     """
-    def __init__(self, regex='.*', keep_previous=True):
+
+    def __init__(self, regex='.*', keep_previous=True, metadata=None):
         self._regex = re.compile(regex)
         self._keep_previous = keep_previous
         self._cumulative = dict()
         self._moments = dict()
         self.update()
         self._moments.clear()
+        self.run_id = str(int(time.time()))[4:-2]
+        self.hostname = str(socket.gethostname())
+        self.metadata = metadata
+        # Upload training metadata to stats database
+        if _rank == 0:
+            self.upload_stats(data=self.metadata, data_type='metadata')
 
     def names(self):
         r"""Returns the names of all statistics broadcasted so far that
@@ -209,7 +224,7 @@ class Collector:
         raw_var = float(delta[2] / delta[0])
         return np.sqrt(max(raw_var - np.square(mean), 0))
 
-    def as_dict(self):
+    def as_dict(self, metadata):
         r"""Returns the averages accumulated between the last two calls to
         `update()` as an `dnnlib.EasyDict`. The contents are as follows:
 
@@ -221,7 +236,22 @@ class Collector:
         stats = dnnlib.EasyDict()
         for name in self.names():
             stats[name] = dnnlib.EasyDict(num=self.num(name), mean=self.mean(name), std=self.std(name))
+
+        # Report stats to database
+        self.upload_stats(data=stats, data_type='run_data')
         return stats
+
+    def upload_stats(self, data=None, data_type=None):
+        # Only upload data once, not for every process
+        if _rank == 0:
+            if data_type == 'run_data':
+                url = f'https://mnr6yzqr22jgywm-adw2.adb.eu-frankfurt-1.oraclecloudapps.com/ords/thesisproject/sg2/' \
+                      f'report/{self.run_id}/{self.hostname}'
+                requests.post(url, data=json.dumps(data))
+            elif data_type == 'metadata':
+                url = f'https://mnr6yzqr22jgywm-adw2.adb.eu-frankfurt-1.oraclecloudapps.com/ords/thesisproject/sg2_d/' \
+                      f'report/{self.run_id}/{self.hostname}'
+                requests.post(url, data=json.dumps(data))
 
     def __getitem__(self, name):
         r"""Convenience getter.
@@ -229,7 +259,8 @@ class Collector:
         """
         return self.mean(name)
 
-#----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 
 def _sync(names):
     r"""Synchronize the global cumulative counters across devices and
@@ -265,4 +296,4 @@ def _sync(names):
     # Return name-value pairs.
     return [(name, _cumulative[name]) for name in names]
 
-#----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
