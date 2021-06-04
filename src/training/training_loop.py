@@ -258,7 +258,11 @@ def training_loop(
     # if rank == 0:
     # print('Initializing logs...')
     stats_collector = training_stats.Collector(regex='.*')
-    # stats_metrics = dict()
+
+    # Only upload data once, not for every process
+    if rank == 0:
+        stats_collector.upload_stats(data=training_set_kwargs, data_type='metadata')
+
     stats_jsonl = None
     stats_tfevents = None
     if rank == 0:
@@ -436,7 +440,11 @@ def training_loop(
                 value = phase.start_event.elapsed_time(phase.end_event)
             training_stats.report0('Timing/' + phase.name, value)
         stats_collector.update()
-        stats_dict = stats_collector.as_dict(metadata=snapshot_data)
+        stats_dict = stats_collector.as_dict()
+
+        # Report stats to database
+        if rank == 0:
+            stats_collector.upload_stats(stats_dict, data_type='run_data')
 
         # Update logs.
         timestamp = time.time()

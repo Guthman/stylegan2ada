@@ -139,7 +139,7 @@ class Collector:
                         (default: True).
     """
 
-    def __init__(self, regex='.*', keep_previous=True, metadata=None):
+    def __init__(self, regex='.*', keep_previous=True):
         self._regex = re.compile(regex)
         self._keep_previous = keep_previous
         self._cumulative = dict()
@@ -148,10 +148,6 @@ class Collector:
         self._moments.clear()
         self.run_id = str(int(time.time()))[4:-2]
         self.hostname = str(socket.gethostname())
-        self.metadata = metadata
-        # Upload training metadata to stats database
-        if _rank == 0:
-            self.upload_stats(data=self.metadata, data_type='metadata')
 
     def names(self):
         r"""Returns the names of all statistics broadcasted so far that
@@ -224,7 +220,7 @@ class Collector:
         raw_var = float(delta[2] / delta[0])
         return np.sqrt(max(raw_var - np.square(mean), 0))
 
-    def as_dict(self, metadata):
+    def as_dict(self):
         r"""Returns the averages accumulated between the last two calls to
         `update()` as an `dnnlib.EasyDict`. The contents are as follows:
 
@@ -236,9 +232,6 @@ class Collector:
         stats = dnnlib.EasyDict()
         for name in self.names():
             stats[name] = dnnlib.EasyDict(num=self.num(name), mean=self.mean(name), std=self.std(name))
-
-        # Report stats to database
-        self.upload_stats(data=stats, data_type='run_data')
         return stats
 
     def upload_stats(self, data=None, data_type=None):
