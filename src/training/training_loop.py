@@ -14,6 +14,8 @@ import psutil
 import PIL.Image
 import numpy as np
 import ujson as json
+import socket
+import requests
 
 import torch
 from torch_utils import misc
@@ -145,6 +147,8 @@ def training_loop(
     torch.backends.cudnn.benchmark = cudnn_benchmark  # Improves training speed.
     conv2d_gradfix.enabled = True  # Improves training speed.
     grid_sample_gradfix.enabled = True  # Avoids errors with the augmentation pipe.
+    run_id = str(int(time.time()))[3:-2]
+    hostname = str(socket.gethostname())
 
     # Load training set.
     # if rank == 0:
@@ -261,10 +265,45 @@ def training_loop(
 
     # Only upload data once, not for every process
     if rank == 0:
-        stats_collector.upload_stats(data=training_set_kwargs, data_type='metadata')
+        url = f'https://mnr6yzqr22jgywm-adw2.adb.eu-frankfurt-1.oraclecloudapps.com/ords/thesisproject/sg_d/' \
+              f'report/{run_id}/{hostname}'
+        metadata = training_set_kwargs
+        more_metadata = [
+            {'run_dir': run_dir},
+            {'data_loader_kwargs': data_loader_kwargs},
+            {'G_kwargs': G_kwargs},
+            {'D_kwargs': D_kwargs},
+            {'G_opt_kwargs': G_opt_kwargs},
+            {'D_opt_kwargs': D_opt_kwargs},
+            {'augment_kwargs': augment_kwargs},
+            {'loss_kwargs': loss_kwargs},
+            {'savenames': savenames},
+            {'random_seed': random_seed},
+            {'num_gpus': num_gpus},
+            {'batch_size': batch_size},
+            {'batch_gpu': batch_gpu},
+            {'ema_kimg': ema_kimg},
+            {'ema_rampup': ema_rampup},
+            {'G_reg_interval': G_reg_interval},
+            {'D_reg_interval': D_reg_interval},
+            {'augment_p': augment_p},
+            {'ada_target': ada_target},
+            {'ada_interval': ada_interval},
+            {'ada_kimg': ada_kimg},
+            {'total_kimg': total_kimg},
+            {'kimg_per_tick': kimg_per_tick},
+            {'image_snapshot_ticks': image_snapshot_ticks},
+            {'network_snapshot_ticks': network_snapshot_ticks},
+            {'resume_pkl': resume_pkl},
+            {'resume_kimg': resume_kimg},
+            {'cudnn_benchmark': cudnn_benchmark}
+        ]
+        for d in more_metadata:
+            metadata.update(d)
+        requests.post(url, data=json.dumps(training_set_kwargs))
 
     stats_jsonl = None
-    stats_tfevents = None
+    # stats_tfevents = None
     if rank == 0:
         stats_jsonl = open(os.path.join(run_dir, 'stats.jsonl'), 'wt')
 
@@ -428,9 +467,15 @@ def training_loop(
                     metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
                 stats_metrics.update(result_dict.results)
         '''
-        del snapshot_data  # conserve memory
+        try:
+            del snapshot_data  # conserve memory
+        except UnboundLocalError:
+            pass
         # !!!
-        del compact_data  # conserve memory
+        try:
+            del compact_data  # conserve memory
+        except UnboundLocalError:
+            pass
 
         # Collect statistics.
         for phase in phases:
@@ -444,7 +489,9 @@ def training_loop(
 
         # Report stats to database
         if rank == 0:
-            stats_collector.upload_stats(stats_dict, data_type='run_data')
+            url = f'https://mnr6yzqr22jgywm-adw2.adb.eu-frankfurt-1.oraclecloudapps.com/ords/thesisproject/sg2/' \
+                  f'report/{run_id}/{hostname}'
+            requests.post(url, data=json.dumps(stats_dict))
 
         # Update logs.
         timestamp = time.time()
@@ -455,14 +502,14 @@ def training_loop(
             # Write stats to file
             stats_jsonl.write(json_data + '\n')
             stats_jsonl.flush()
-        if stats_tfevents is not None:
-            global_step = int(cur_nimg / 1e3)
-            walltime = timestamp - start_time
-            for name, value in stats_dict.items():
-                stats_tfevents.add_scalar(name, value.mean, global_step=global_step, walltime=walltime)
+        # if stats_tfevents is not None:
+        #     global_step = int(cur_nimg / 1e3)
+        #     walltime = timestamp - start_time
+        #     for name, value in stats_dict.items():
+        #         stats_tfevents.add_scalar(name, value.mean, global_step=global_step, walltime=walltime)
             # for name, value in stats_metrics.items():
             # stats_tfevents.add_scalar(f'Metrics/{name}', value, global_step=global_step, walltime=walltime)
-            stats_tfevents.flush()
+            # stats_tfevents.flush()
         if progress_fn is not None:
             progress_fn(cur_nimg // 1000, total_kimg)
 
@@ -470,7 +517,7 @@ def training_loop(
         cur_tick += 1
         tick_start_nimg = cur_nimg
         tick_start_time = time.time()
-        maintenance_time = tick_start_time - tick_end_time
+        # maintenance_time = tick_start_time - tick_end_time
         if done:
             break
 

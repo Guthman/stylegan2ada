@@ -15,10 +15,6 @@ import re
 import numpy as np
 import torch
 import dnnlib
-import requests
-import json
-import socket
-import time
 
 from . import misc
 
@@ -146,8 +142,6 @@ class Collector:
         self._moments = dict()
         self.update()
         self._moments.clear()
-        self.run_id = str(int(time.time()))[4:-2]
-        self.hostname = str(socket.gethostname())
 
     def names(self):
         r"""Returns the names of all statistics broadcasted so far that
@@ -233,18 +227,6 @@ class Collector:
         for name in self.names():
             stats[name] = dnnlib.EasyDict(num=self.num(name), mean=self.mean(name), std=self.std(name))
         return stats
-
-    def upload_stats(self, data=None, data_type=None):
-        # Only upload data once, not for every process
-        if _rank == 0:
-            if data_type == 'run_data':
-                url = f'https://mnr6yzqr22jgywm-adw2.adb.eu-frankfurt-1.oraclecloudapps.com/ords/thesisproject/sg2/' \
-                      f'report/{self.run_id}/{self.hostname}'
-                requests.post(url, data=json.dumps(data))
-            elif data_type == 'metadata':
-                url = f'https://mnr6yzqr22jgywm-adw2.adb.eu-frankfurt-1.oraclecloudapps.com/ords/thesisproject/sg2_d/' \
-                      f'report/{self.run_id}/{self.hostname}'
-                requests.post(url, data=json.dumps(data))
 
     def __getitem__(self, name):
         r"""Convenience getter.
