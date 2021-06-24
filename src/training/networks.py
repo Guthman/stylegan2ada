@@ -486,7 +486,9 @@ class SynthesisNetwork(torch.nn.Module):
         self.img_channels = img_channels
         self.fmap_base = channel_base
         self.block_resolutions = [2 ** i for i in range(2, self.img_resolution_log2 + 1)]
-        channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
+        # channels_dict = {res: min(channel_base // res, channel_max) for res in self.block_resolutions}
+        # TODO: naar argv
+        channels_dict = {res: min(channel_base*4 // res, channel_max*4) for res in self.block_resolutions}
         fp16_resolution = max(2 ** (self.img_resolution_log2 + 1 - num_fp16_res), 8)
 
         self.num_ws = 0
