@@ -12,7 +12,7 @@ import tempfile
 import torch
 from torch_utils import training_stats
 from torch_utils import custom_ops
-
+from metrics import metric_main
 import dnnlib
 from training import training_loop
 
@@ -55,6 +55,7 @@ def setup_training_loop_kwargs(
         nhwc=None,  # Use NHWC memory format with FP16: <bool>, default = False
         workers=None,  # Override number of DataLoader workers: <int>, default = 3
         nobench=None,  # Disable cuDNN benchmarking: <bool>, default = False
+        metrics=None,  # List of metric names: [], ['fid50k_full'] (default), ...
 ):
     args = dnnlib.EasyDict()
     args.G_kwargs = dnnlib.EasyDict(class_name='training.networks.Generator', z_dim=512, w_dim=512,
@@ -71,6 +72,13 @@ def setup_training_loop_kwargs(
     assert snap > 1, '--snap must be at least 1'
     args.image_snapshot_ticks = 1
     args.network_snapshot_ticks = snap
+
+    if metrics is None:
+        metrics = ['fid50k_full']
+    assert isinstance(metrics, list)
+    if not all(metric_main.is_valid_metric(metric) for metric in metrics):
+        raise UserError('\n'.join(['--metrics can only contain the following values:'] + metric_main.list_valid_metrics()))
+    args.metrics = metrics
 
     args.random_seed = seed
 

@@ -78,6 +78,7 @@ def generate_images(
 
     os.makedirs(outdir, exist_ok=True)
 
+    # Enable image generation using cpu
     import functools
     G.forward = functools.partial(G.forward, force_fp32=True)
 
