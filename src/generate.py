@@ -9,7 +9,7 @@ import dnnlib
 import numpy as np
 import PIL.Image
 import torch
-
+from tqdm.auto import tqdm
 import legacy
 
 no_images = 1000
@@ -17,7 +17,6 @@ no_images = 1000
 
 def num_range(s: str) -> List[int]:
     # Accept either a comma separated list of numbers 'a, b, c' or a range 'a-c' and return as a list of ints.
-
     try:
         range_re = re.compile(r'^(\d+)-(\d+)$')
         m = range_re.match(s)
@@ -33,14 +32,14 @@ def num_range(s: str) -> List[int]:
 @click.command()
 @click.pass_context
 @click.option('--network', 'network_pkl', help='Network pickle filename', required=True,
-              default=r'F:\temp\thesisdata\stylegan2ada_OUTPUT\000-saatchi_portrait_cond128-128-cond-auto4-gamma5-batch48-gf_bnc\snapshot-128-2177.pkl')
+              default=r'E:\temp\thesisdata\snapshot-128-4838.pkl')
 @click.option('--seeds', type=num_range, help='List of random seeds', default='3-4')
-@click.option('--trunc', 'truncation_psi', type=float, help='Truncation psi', default=1, show_default=True)
-@click.option('--class', 'class_idx', type=int, help='Class label (unconditional if not specified)', default='4')
-@click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
+@click.option('--trunc', 'truncation_psi', type=float, help='Truncation psi', default=0.9, show_default=True)
+@click.option('--class', 'class_idx', type=int, help='Class label (unconditional if not specified)', default='1')
+@click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='random', show_default=True)
 @click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR',
-              default=r'F:\temp\thesisdata\stylegan2ada_OUTPUT\000-saatchi_portrait_cond128-128-cond-auto4-gamma5-batch48-gf_bnc\gen')
+              default=r'E:\temp\thesisdata\stylegan2_gen_cond\class1_kimg4838_psi0.9')
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -90,7 +89,7 @@ def generate_images(
         ws = np.load(projected_w)['w']
         ws = torch.tensor(ws, device=device)  # pylint: disable=not-callable
         assert ws.shape[1:] == (G.num_ws, G.w_dim)
-        for idx, w in enumerate(ws):
+        for idx, w in enumerate(tqdm(ws)):
             img = G.synthesis(w.unsqueeze(0), noise_mode=noise_mode)
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
             img = PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/proj{idx:02d}.png')
@@ -110,8 +109,8 @@ def generate_images(
             print('warn: --class=lbl ignored when running on an unconditional network')
 
     # Generate images.
-    for seed_idx, seed in enumerate(seeds):
-        print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
+    for seed_idx, seed in enumerate(tqdm(seeds)):
+        # print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
         z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
         img = G(z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
         img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
